@@ -93,9 +93,23 @@ public final class VanillaBlockSnapshot implements BlockSnapshot {
         this.data = container;
     }
 
+    public int getUpdateFlag() {
+        return this.updateFlag;
+    }
+
     @Override
     public BlockState getState() {
         return (BlockState) this.blockState;
+    }
+
+    @Nullable
+    public BlockState getCurrentState() {
+        final World world = getWorld();
+        BlockState state = null;
+        if (world != null) {
+            state = (BlockState) world.getBlockState(this.pos);
+        }
+        return state;
     }
 
     @Override
@@ -106,6 +120,10 @@ public final class VanillaBlockSnapshot implements BlockSnapshot {
     @Override
     public Vector3i getLocation() {
         return this.vecPos;
+    }
+
+    public BlockPos getPos() {
+        return this.pos;
     }
 
     @Override
@@ -187,7 +205,7 @@ public final class VanillaBlockSnapshot implements BlockSnapshot {
         if (snapshotState.getBlock() != currentState.getBlock() || snapshotState.getBlock().getMetaFromState(snapshotState)
                 != currentState.getBlock().getMetaFromState(currentState)) {
             if (force) {
-                world.setBlockState(pos, currentState, updateFlag);
+                world.setBlockState(pos, snapshotState, updateFlag);
                 world.markBlockForUpdate(pos);
             } else {
                 return false;

@@ -24,28 +24,42 @@
  */
 package org.spongepowered.vanilla;
 
+import com.flowpowered.math.vector.Vector3i;
+import com.google.common.collect.Maps;
+import net.minecraft.block.state.IBlockState;
+import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.entity.player.EntityPlayerMP;
 import net.minecraft.init.Blocks;
+import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.ItemSword;
 import net.minecraft.network.Packet;
 import net.minecraft.network.play.server.S23PacketBlockChange;
+import net.minecraft.stats.StatList;
 import net.minecraft.tileentity.TileEntity;
 import net.minecraft.util.BlockPos;
 import net.minecraft.util.EnumFacing;
 import net.minecraft.world.World;
 import net.minecraft.world.WorldSettings;
+import org.spongepowered.api.block.BlockSnapshot;
+import org.spongepowered.api.block.BlockState;
+import org.spongepowered.api.data.DataManipulator;
 import org.spongepowered.api.entity.player.Player;
 import org.spongepowered.api.event.SpongeEventFactory;
 import org.spongepowered.api.event.block.BlockBreakEvent;
 import org.spongepowered.api.event.cause.Cause;
 import org.spongepowered.api.event.entity.player.PlayerBreakBlockEvent;
+import org.spongepowered.api.event.entity.player.PlayerPlaceBlockEvent;
 import org.spongepowered.api.world.Location;
 import org.spongepowered.api.world.extent.Extent;
 import org.spongepowered.common.Sponge;
 import org.spongepowered.common.registry.SpongeGameRegistry;
 import org.spongepowered.common.util.VecHelper;
 import org.spongepowered.vanilla.block.VanillaBlockSnapshot;
+import org.spongepowered.vanilla.interfaces.IBlockSnapshotContainer;
+
+import java.util.Collection;
+import java.util.Map;
 
 public final class VanillaHooks {
 
@@ -62,8 +76,8 @@ public final class VanillaHooks {
      * @param blockFacing The face of the block
      * @return The called event
      */
-    public static PlayerBreakBlockEvent preparePlayerBreakBlockEvent(World world, WorldSettings.GameType gameType, EntityPlayerMP entityPlayer,
-                                                                     BlockPos pos, EnumFacing blockFacing) {
+    public static PlayerBreakBlockEvent callPlayerBreakBlockEvent(World world, WorldSettings.GameType gameType, EntityPlayerMP entityPlayer,
+                                                                  BlockPos pos, EnumFacing blockFacing) {
         boolean preCancelEvent = false;
         if (gameType.isCreative() && entityPlayer.getHeldItem() != null && entityPlayer.getHeldItem().getItem() instanceof ItemSword) {
             preCancelEvent = true;
@@ -109,5 +123,74 @@ public final class VanillaHooks {
             }
         }
         return event;
+    }
+
+    public static boolean callPlayerPlaceBlockEvent(ItemStack stack, EntityPlayer player, World world, BlockPos pos, EnumFacing side, float hitX, float hitY, float hitZ) {
+        // Store current itemstack state
+        final org.spongepowered.api.item.inventory.ItemStack snapshotStack = Sponge.getGame().getRegistry().getItemBuilder().fromItemStack(
+                (org.spongepowered.api.item.inventory.ItemStack) stack).build();
+        ((IBlockSnapshotContainer) world).captureBlockSnapshots(true);
+        // Perform item use
+        boolean success = stack.getItem().onItemUse(stack, player, world, pos, side, hitX, hitY, hitZ);
+        ((IBlockSnapshotContainer) world).captureBlockSnapshots(false);
+
+        final Map<Vector3i, BlockSnapshot> copiedSnapshots = Maps.newHashMap();
+        for (Map.Entry<Vector3i, BlockSnapshot> entry : ((IBlockSnapshotContainer) world).getCapturedSnapshots().entrySet()) {
+            final VanillaBlockSnapshot old = (VanillaBlockSnapshot) entry.getValue();
+            copiedSnapshots.put(new Vector3i(entry.getKey().getX(), entry.getKey().getY(), entry.getKey().getZ()), new VanillaBlockSnapshot(old
+                    .getWorld(), old.getPos(), (IBlockState) old.getState(), old.getUpdateFlag()));
+        }
+        ((IBlockSnapshotContainer) world).getCapturedSnapshots().clear();
+        // If item use is successful, process player block placement
+        if (success) {
+            // Store the stack after ItemUse
+            final org.spongepowered.api.item.inventory.ItemStack useItemStack = Sponge.getGame().getRegistry().getItemBuilder().fromItemStack((org.spongepowered.api.item.inventory.ItemStack) stack).build();
+            // Set the stack back to the pre item use for event
+            copyStack(stack, (ItemStack) snapshotStack);
+            try {
+                final BlockSnapshot test = copiedSnapshots.get(VecHelper.toVector(world.getBlockState(pos).getBlock().isReplaceable(world, pos) ?
+                        pos.up() : pos.offset(side)));
+                final PlayerPlaceBlockEvent event = SpongeEventFactory.createPlayerPlaceBlock(Sponge.getGame(), new Cause(null, player, null),
+                        (Player) player, new Location((Extent) world, VecHelper.toVector(pos)), test, SpongeGameRegistry.directionMap.inverse().get(side));
+                // Rollback if cancelled
+                if (Sponge.getGame().getEventManager().post(event)) {
+                    success = false;
+                    for (BlockSnapshot snapshot : copiedSnapshots.values()) {
+                        ((IBlockSnapshotContainer) world).restoreBlockSnapshots(true);
+                        System.out.println("Applying -> " + snapshot);
+                        ((VanillaBlockSnapshot) snapshot).apply(true, VanillaBlockSnapshot.UPDATE_CLIENT);
+                        ((IBlockSnapshotContainer) world).restoreBlockSnapshots(false);
+                    }
+                } else {
+                    // Set itemstack to new content
+                    copyStack(stack, (ItemStack) useItemStack);
+                    for (BlockSnapshot snapshot : copiedSnapshots.values()) {
+                        final VanillaBlockSnapshot vSnapshot = (VanillaBlockSnapshot) snapshot;
+                        final BlockState snapState = vSnapshot.getState();
+                        final BlockState currentState = vSnapshot.getCurrentState();
+                        if (currentState != null && !((IBlockState) currentState).getBlock().hasTileEntity()) {
+                            ((IBlockState) currentState).getBlock().onBlockAdded(world, vSnapshot.getPos(), ((IBlockState) currentState));
+                        }
+
+                        ((IBlockSnapshotContainer) world).markAndNotifyBlock(vSnapshot.getPos(), null, (IBlockState) snapState, (IBlockState)
+                                currentState, vSnapshot.getUpdateFlag());
+                    }
+                    player.addStat(StatList.objectUseStats[Item.getIdFromItem(stack.getItem())], 1);
+                }
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }
+        ((IBlockSnapshotContainer) world).getCapturedSnapshots().clear();
+        return success;
+    }
+
+    private static void copyStack(ItemStack source, ItemStack target) {
+        target.stackSize = source.stackSize;
+        // TODO May need to clear manipulators from source stack sans durability
+        final Collection<DataManipulator<?>> manipulators = ((org.spongepowered.api.item.inventory.ItemStack) source).getManipulators();
+        for (DataManipulator<?> manipulator : manipulators) {
+            ((org.spongepowered.api.item.inventory.ItemStack) target).offer((DataManipulator) manipulator);
+        }
     }
 }
