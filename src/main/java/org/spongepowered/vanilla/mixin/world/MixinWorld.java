@@ -112,6 +112,14 @@ public abstract class MixinWorld implements IBlockSnapshotContainer {
         }
     }
 
+    public BlockSnapshot getBlockSnapshot(Vector3i position) {
+        return new VanillaBlockSnapshot((World) (Object) this, VecHelper.toBlockPos(position));
+    }
+
+    public BlockSnapshot getBlockSnapshot(int x, int y, int z) {
+        return new VanillaBlockSnapshot((World) (Object) this, x, y, z);
+    }
+
     @Override
     public boolean isCapturingBlockSnapshots() {
         return this.captureSnapshots;

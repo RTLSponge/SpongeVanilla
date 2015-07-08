@@ -59,6 +59,14 @@ public final class VanillaBlockSnapshot implements BlockSnapshot {
     private WeakReference<World> worldRef;
     private int updateFlag;
 
+    public VanillaBlockSnapshot(World world, int x, int y, int z) {
+        this(world, new BlockPos(x, y, z));
+    }
+
+    public VanillaBlockSnapshot(World world, BlockPos pos) {
+        this(world, pos, world.getBlockState(pos));
+    }
+
     public VanillaBlockSnapshot(World world, BlockPos pos, IBlockState blockState) {
         this(world, pos, blockState, UPDATE_CLIENT_WITH_PHYSICS);
     }

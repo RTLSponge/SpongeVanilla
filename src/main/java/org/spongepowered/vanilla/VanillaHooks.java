@@ -137,8 +137,7 @@ public final class VanillaHooks {
         final Map<Vector3i, BlockSnapshot> copiedSnapshots = Maps.newHashMap();
         for (Map.Entry<Vector3i, BlockSnapshot> entry : ((IBlockSnapshotContainer) world).getCapturedSnapshots().entrySet()) {
             final VanillaBlockSnapshot old = (VanillaBlockSnapshot) entry.getValue();
-            copiedSnapshots.put(new Vector3i(entry.getKey().getX(), entry.getKey().getY(), entry.getKey().getZ()), new VanillaBlockSnapshot(old
-                    .getWorld(), old.getPos(), (IBlockState) old.getState(), old.getUpdateFlag()));
+            copiedSnapshots.put(new Vector3i(entry.getKey().getX(), entry.getKey().getY(), entry.getKey().getZ()), old.copy());
         }
         ((IBlockSnapshotContainer) world).getCapturedSnapshots().clear();
         // If item use is successful, process player block placement
